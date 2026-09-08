@@ -22,9 +22,11 @@ download_tasks: dict = {}
 
 def update_progress(d):
     if d.get("status") == "downloading":
-        pass  # no real progress shown in your current setup
+        # Hook receives no task id in this simple MVP.
+        # The download endpoint updates its task after extraction.
+        pass
 
-def get_yt_dlp_opts(quality: str, cookies_from_browser: str | None = None):
+def get_yt_dlp_opts(quality: str):
     opts = {
         "format": quality,
         "outtmpl": "downloads/%(title)s.%(ext)s",
@@ -32,9 +34,25 @@ def get_yt_dlp_opts(quality: str, cookies_from_browser: str | None = None):
         "no_warnings": True,
         "progress_hooks": [update_progress],
         "nooverwrites": True,
+        # Datacenter IPs (Render, AWS, etc.) get YouTube's bot-check far more
+        # than residential/mobile IPs. These clients skip the web sign-in
+        # wall in most cases and don't require a JS runtime.
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "tv"],
+            }
+        },
     }
-    if cookies_from_browser:
-        opts["cookies_from_browser"] = cookies_from_browser
+
+    # Optional: point this at a cookies.txt file for cases where the
+    # player_client fallback above still gets blocked. Never commit the
+    # cookies file itself to git -- upload it as a Render "Secret File"
+    # (Render mounts it on disk) and set YTDLP_COOKIES_PATH to that path,
+    # e.g. /etc/secrets/cookies.txt
+    cookie_path = os.environ.get("YTDLP_COOKIES_PATH")
+    if cookie_path and os.path.exists(cookie_path):
+        opts["cookiefile"] = cookie_path
+
     return opts
 
 @app.post("/download")
@@ -44,16 +62,11 @@ async def download_media(req: DownloadRequest):
 
     try:
         os.makedirs("downloads", exist_ok=True)
-        
-        # 🔥 FIXED: cookies support
-        ydl_opts = get_yt_dlp_opts(req.quality, cookies_from_browser="firefox")
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(get_yt_dlp_opts(req.quality)) as ydl:
             info = ydl.extract_info(req.url, download=True)
             filename = ydl.prepare_filename(info)
 
         size = os.path.getsize(filename) if os.path.exists(filename) else None
-        
         download_tasks[task_key] = DownloadStatus(
             status="ready",
             progress=100.0,
