@@ -22,12 +22,10 @@ download_tasks: dict = {}
 
 def update_progress(d):
     if d.get("status") == "downloading":
-        # Hook receives no task id in this simple MVP.
-        # The download endpoint updates its task after extraction.
-        pass
+        pass  # no real progress shown in your current setup
 
-def get_yt_dlp_opts(quality: str):
-    return {
+def get_yt_dlp_opts(quality: str, cookies_from_browser: str | None = None):
+    opts = {
         "format": quality,
         "outtmpl": "downloads/%(title)s.%(ext)s",
         "quiet": True,
@@ -35,6 +33,9 @@ def get_yt_dlp_opts(quality: str):
         "progress_hooks": [update_progress],
         "nooverwrites": True,
     }
+    if cookies_from_browser:
+        opts["cookies_from_browser"] = cookies_from_browser
+    return opts
 
 @app.post("/download")
 async def download_media(req: DownloadRequest):
@@ -43,11 +44,16 @@ async def download_media(req: DownloadRequest):
 
     try:
         os.makedirs("downloads", exist_ok=True)
-        with yt_dlp.YoutubeDL(get_yt_dlp_opts(req.quality)) as ydl:
+        
+        # 🔥 FIXED: cookies support
+        ydl_opts = get_yt_dlp_opts(req.quality, cookies_from_browser="firefox")
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(req.url, download=True)
             filename = ydl.prepare_filename(info)
 
         size = os.path.getsize(filename) if os.path.exists(filename) else None
+        
         download_tasks[task_key] = DownloadStatus(
             status="ready",
             progress=100.0,
